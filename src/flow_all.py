@@ -32,9 +32,9 @@ from prefect.schedules import IntervalSchedule
 from pathlib import Path
 from datetime import timedelta
 
-import tasks_calc as calc
-import tasks_local as local
-import tasks_cloud as cloud
+from tasks import calc
+from tasks import local
+from tasks import cloud
 
 
 schedule = IntervalSchedule(interval=timedelta(seconds=1000))
