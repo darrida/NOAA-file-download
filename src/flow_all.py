@@ -32,12 +32,12 @@ from prefect.schedules import IntervalSchedule
 from pathlib import Path
 from datetime import timedelta
 
-from tasks import calc
-from tasks import local
-from tasks import cloud
+from tasks import tasks_calc as calc
+from tasks import tasks_local as local
+from tasks import tasks_cloud as cloud
 
 
-schedule = IntervalSchedule(interval=timedelta(seconds=1000))
+schedule = IntervalSchedule(interval=timedelta(seconds=5))
 
 n_workers = 13
 executor = LocalDaskExecutor(scheduler="processes", num_workers=n_workers)
@@ -58,7 +58,7 @@ with Flow("NOAA files: Download All", executor=executor, schedule=schedule) as f
     )
     t7_task = cloud.find_new_year(url=base_url, next_year=t6_next, year=t1_year, data_dir=data_dir)
 
-flow.run_config = LocalRun(working_dir="/home/share/github/1-NOAA-Data-Download-Cleaning-Verification/")
+# flow.run_config = LocalRun(working_dir="/home/share/github/1-NOAA-Data-Download-Cleaning-Verification/")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ from prefect import task
 from icecream import ic
 
 
-@task(log_stdout=True)
+@task() # log_stdout=True)
 def query_diff_local_cloud(local_set: set, cloud_set: set, chunk_size: int, workers: int) -> set:
     diff_set = cloud_set.difference(local_set)
     if diff_set:
