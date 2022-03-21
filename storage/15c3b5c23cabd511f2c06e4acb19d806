@@ -42,7 +42,7 @@ DeploymentSpec(
     flow_location='./src/flow_all.py',
     flow=main,
     schedule=IntervalSchedule(interval=timedelta(days=1)),
-    # flow_runner=SubprocessFlowRunner(virtualenv='./.venv', stream_output=True),
+    flow_runner=SubprocessFlowRunner(virtualenv='./.venv', stream_output=True),
     tags=['noaa', 'heroku-postgres'],
     # parameters={
     #     'url': "https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/",

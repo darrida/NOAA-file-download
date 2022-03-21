@@ -1,3 +1,3 @@
-# import tasks_calc as calc
-# import tasks_cloud as cloud
-# import tasks_local as local
+# import tasks.calc as calc
+# import tasks.cloud as cloud
+# import tasks.local as local

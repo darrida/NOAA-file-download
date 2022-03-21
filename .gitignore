@@ -1,6 +1,9 @@
 # Project Specific
 */local_data
+local_data
 */dask-worker-space
+orion-dev
+*/orion-dev
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

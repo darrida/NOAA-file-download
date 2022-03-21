@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup as BS
 from tqdm import tqdm
 
 
-@task(log_stdout=True)
+@task(name='Query Cloud CSVs', tags=['noaa-website'])
 def query_cloud_csvs(url: str, year: int) -> set:
     response = requests.get(url)
     parsed_html = BS(response.content, "html.parser")
@@ -20,7 +20,7 @@ def query_cloud_csvs(url: str, year: int) -> set:
     return csv_cloud_set
 
 
-@task(log_stdout=True, max_retries=5, retry_delay=timedelta(seconds=5))
+@task(name='Download New CSVs', tags=['noaa-website'], retries=5, retry_delay_seconds=1)
 def download_new_csvs(url: str, year: int, diff_set: set, data_dir: str) -> bool:
     if int(year) > 0:
         count = 0
@@ -45,7 +45,7 @@ def download_new_csvs(url: str, year: int, diff_set: set, data_dir: str) -> bool
         return True
 
 
-@task(log_stdout=True)
+@task(name='Find New/Next Year', tags=['noaa-website'])
 def find_new_year(url: str, next_year: bool, year: int, data_dir: str):
     if next_year:
         response = requests.get(url)
