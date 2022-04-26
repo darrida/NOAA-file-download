@@ -28,7 +28,7 @@ def download_new_csvs(url: str, year: int, diff_set: set, data_dir: str) -> bool
         download_path = data_dir / str(year)
         if os.path.exists(download_path) == False:
             Path(download_path).mkdir(parents=True, exist_ok=True)
-        for i in tqdm(diff_set):
+        for i in diff_set: # tqdm(diff_set):
             if count <= 1000:
                 try:
                     download_url = url + "/" + i
