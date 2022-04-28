@@ -27,6 +27,9 @@ from prefect import Flow, Parameter, unmapped, mapped
 from prefect.executors.dask import LocalDaskExecutor
 from prefect.run_configs.local import LocalRun
 from prefect.schedules import IntervalSchedule
+from loguru import logger as local_logger
+
+# local_logger.add("download_timeouts.log", rotation="500 MB")
 
 # Standard
 from pathlib import Path
@@ -37,14 +40,14 @@ from tasks import tasks_local as local
 from tasks import tasks_cloud as cloud
 
 
-schedule = IntervalSchedule(interval=timedelta(seconds=5))
+schedule = IntervalSchedule(interval=timedelta(minutes=30))
 
-n_workers = 13
+n_workers = 5
 executor = LocalDaskExecutor(scheduler="processes", num_workers=n_workers)
 with Flow("NOAA files: Download All", executor=executor, schedule=schedule) as flow:
     base_url = Parameter("base_url", default="https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/")
     data_dir = Parameter("data_dir", default=str(Path("./local_data/noaa_temp_downloads")))
-    download_chunk_size = Parameter("download_map_lists", default=100)
+    download_chunk_size = Parameter("download_map_lists", default=300)
 
     t1_year = local.find_highest_year(url=base_url, data_dir=data_dir)
     t2_url = local.build_url(base_url=base_url, year=t1_year)

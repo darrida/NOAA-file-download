@@ -1,12 +1,16 @@
 from pathlib import Path
 from datetime import timedelta
-import re
-import os
-
+import re, os
+import time
 from prefect import task
 import requests
 from bs4 import BeautifulSoup as BS
 from tqdm import tqdm
+from pqdm.processes import pqdm
+from loguru import logger as local_logger
+from requests.exceptions import Timeout, TooManyRedirects, ConnectionError
+
+
 
 
 @task(log_stdout=True)
@@ -28,16 +32,23 @@ def download_new_csvs(url: str, year: int, diff_set: set, data_dir: str) -> bool
         download_path = data_dir / str(year)
         if os.path.exists(download_path) == False:
             Path(download_path).mkdir(parents=True, exist_ok=True)
-        for i in tqdm(diff_set):
+        for i in diff_set: #tqdm(diff_set):
             if count <= 1000:
                 try:
                     download_url = url + "/" + i
-                    # print(download_url)
-                    result = requests.get(download_url)
+                    result = requests.get(download_url, timeout=15)
                     file_path = Path(data_dir / year / i)
                     open(file_path, "wb").write(result.content)
                 except requests.exceptions.InvalidURL:
-                    print("Bad url", i)
+                    local_logger.error(f'InvalidURL on request for {download_url}')
+                    local_logger.error(f'Error message: {e}')
+                except Timeout as e:
+                    local_logger.error(f'Timeout on request for {download_url}')
+                    local_logger.error(f'Error message: {e}')
+                    time.sleep(600)
+                except ConnectionError as e:
+                    local_logger.error(f'Connection error on request for {download_url}')
+                    local_logger.error(f'Error message: {e}')
             count += 1
         if count <= 2000:
             return True
