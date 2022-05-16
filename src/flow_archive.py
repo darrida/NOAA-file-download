@@ -1,13 +1,12 @@
-import re
+import tarfile, shutil, re
 from pprint import pprint
 from datetime import datetime, timedelta
 from pathlib import Path
 from tqdm import *
-from prefect import Flow, Parameter, task, unmapped, mapped
+from prefect import Flow, Parameter, task, mapped
 from prefect.executors.dask import LocalDaskExecutor
 from loguru import logger as local_logger
 import pandas as pd
-import numpy as np
 import httpx
 
 
@@ -16,7 +15,7 @@ def query_cloud_archives(url: str) -> set:
     table = pd.read_html(url, skiprows=2)
     table[0].columns = ['name', 'date', 'size', 'drop']
     table = table[0].drop(['drop'], axis = 1)
-    table['date'] =  pd.to_datetime(table['date'], format='%Y-%m-%d %H:%M')#  %d%b%Y:%H:%M:%S.%f')
+    table['date'] =  pd.to_datetime(table['date'], format='%Y-%m-%d %H:%M')
     pprint(table)
     return table
 
@@ -28,33 +27,40 @@ def query_local_archives(data_dir: str) -> set:
     for item in data_path.rglob('*.tar.gz'):
         if re.match(r'.*_archive.tar.gz', item.name):
             continue
+        if re.match(r'\d\d\d\d.tar.gz', item.name):
+            continue
         dt_m = datetime.fromtimestamp(item.stat().st_mtime)
         size = item.stat().st_size
+
         local_d.append({'name': item.name, 'date': dt_m, 'size': str(round(size / 1000))})
     local_df = pd.DataFrame(local_d)
-    print(local_df)
     return local_df
 
 
 @task()
 def archives_difference(cloud, local):
-    diff_df = pd.concat([cloud['name'], local['name']]).drop_duplicates(keep=False)
-    if len(diff_df) > 0:
-        diff_df = diff_df.replace({np.nan: None})
-        return diff_df.to_list()
+    cloud['date_str'] = cloud['date'].dt.strftime('%Y%m%d_%H%M')
+    cloud_set = set([(f"{str(row['name']).replace('.tar.gz', '')}_ts_{row['date_str']}.tar.gz", row['name']) for index, row in cloud.iterrows()])
+    local_set = set([(row['name'], f"{row['name'][:4]}.tar.gz") for index, row in local.iterrows()])
+    diff_set = cloud_set.difference(local_set)
+    pprint(diff_set)
+    diff_l = list(diff_set)
+    diff_l.sort()
+    return diff_l
 
 
 @task(log_stdout=True, max_retries=3, retry_delay=timedelta(seconds=5))
-def download(filename, url, data_dir):
+def download(file_item: tuple, url: str, data_dir: str):
     try:
-        print(filename)
+        ts_filename, filename = file_item
         if filename is None:
             return
         download_url = f'{url}/{filename}'
         local_logger.info(f'Starting Download: {download_url}')
         file_path = Path(data_dir) / filename.replace(".tar.gz", "")
         file_path.mkdir(parents=True, exist_ok=True)
-        with open(file_path / filename, 'wb') as download_file:
+        local_logger.info(f'Download Starting: {download_url}')
+        with open(file_path / ts_filename, 'wb') as download_file:
             with httpx.stream("GET", download_url) as response:
                 total = int(response.headers["Content-Length"])
                 with tqdm(total=total, unit_scale=True, unit_divisor=1024, unit="B") as progress:
@@ -63,6 +69,17 @@ def download(filename, url, data_dir):
                         download_file.write(chunk)
                         progress.update(response.num_bytes_downloaded - num_bytes_downloaded)
                         num_bytes_downloaded = response.num_bytes_downloaded
+        local_logger.info(f'Download Complete: {download_url}')
+        local_logger.info(f'Extract Starting: {ts_filename}')
+        extract_dir = Path(file_path) / 'data'
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with open(str(extract_dir / ts_filename).replace('.tar.gz', ''), 'w') as f:
+            pass
+        with tarfile.open(file_path / ts_filename) as tar:
+            tar.extractall(extract_dir)
+        local_logger.info(f'Extract Complete: {ts_filename}')
     except httpx.ConnectTimeout as e:
         local_logger.error(f'Error message: {e}')
         raise httpx.ConnectTimeout(e)
@@ -72,6 +89,16 @@ def download(filename, url, data_dir):
     except AttributeError as e:
         local_logger.error(f'{filename} not found.')
         local_logger.error(f'Error message: {e}')
+    except (Exception) as e:
+        ts_filename = file_path / ts_filename
+        if Path(ts_filename).exists():
+            Path(ts_filename).unlink()
+        raise Exception(e)
+    except KeyboardInterrupt as e:
+        ts_filename = file_path / ts_filename
+        if Path(ts_filename).exists():
+            Path(ts_filename).unlink()
+        raise KeyboardInterrupt(e)
 
 
 n_workers = 1
@@ -83,7 +110,7 @@ with Flow("NOAA files: Download All", executor=executor) as flow:
     cloud_df = query_cloud_archives(base_url)
     local_df = query_local_archives(data_dir)
     diff_l = archives_difference(cloud_df, local_df)
-    downloads = download(mapped(diff_l), unmapped(base_url), unmapped(data_dir))
+    downloads = download(mapped(diff_l), base_url, data_dir)
 
 
 if __name__ == "__main__":
