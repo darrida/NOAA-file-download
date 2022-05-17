@@ -25,10 +25,8 @@ from src.tasks import query_cloud_archives, query_local_archives, archives_diffe
 
 n_workers = 1
 
-@flow(name="NOAA-files-download", 
-    task_runner=SequentialTaskRunner()
-    # task_runner=DaskTaskRunner(cluster_kwargs={"n_workers": 2})
-)
+@flow(name="NOAA-files-download", task_runner=SequentialTaskRunner())
+# @flow(name="NOAA-files-download", task_runner=DaskTaskRunner(cluster_kwargs={"n_workers": 2}))
 def file_download():
     base_url = "https://www.ncei.noaa.gov/data/global-summary-of-the-day/archive"
     data_dir = str(Path("./local_data/global-summary-of-the-day-archive"))
