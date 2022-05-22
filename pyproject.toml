@@ -1,12 +1,12 @@
 [tool.poetry]
-name = "noaa-temp-file-download"
-version = "2022.01.24"
+name = "src"
+version = "2022.05.22"
 description = "Downlads hundreds of thousands of temperature CSV files from NOAA"
 authors = ["darrida <darrida.py@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-prefect = "^1.2.0"
+prefect = "^2.0b4"
 boto3 = "^1.20.41"
 tqdm = "^4.62.3"
 pandas = "^1.4.0"
@@ -14,9 +14,8 @@ icecream = "^2.1.1"
 bs4 = "^0.0.1"
 requests = "^2.27.1"
 loguru = "^0.6.0"
-pqdm = "^0.2.0"
-lxml = "^4.8.0"
 httpx = "^0.22.0"
+lxml = "^4.8.0"
 
 [tool.poetry.dev-dependencies]
 black = "^21.12b0"
