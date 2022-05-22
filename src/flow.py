@@ -16,14 +16,11 @@
 #   - Updated archive files are detected and downloaded (does't replace original tar.gz, but does replace extracted
 #     files in "data" folder
 ##############################################################################
-
 from prefect import flow
 from prefect.task_runners import SequentialTaskRunner
 from pathlib import Path
 from src.tasks import query_cloud_archives, query_local_archives, archives_difference, download
 
-
-n_workers = 1
 
 @flow(name="NOAA-files-download", task_runner=SequentialTaskRunner())
 def file_download():
