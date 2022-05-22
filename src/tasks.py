@@ -3,7 +3,6 @@ from datetime import datetime
 from pathlib import Path
 from tqdm import *
 from prefect import task, get_run_logger
-from loguru import logger as local_logger
 import pandas as pd
 import httpx
 
@@ -54,7 +53,7 @@ async def download(file_item: tuple, url: str, data_dir: str):
         if filename is None:
             return
         if pd.isnull(filename):
-            local_logger.warning(f'{filename} == pd.NaT')
+            logger.warning(f'{filename} == pd.NaT')
             return
         download_url = f'{url}/{filename}'
         file_path = Path(data_dir) / filename.replace(".tar.gz", "")
