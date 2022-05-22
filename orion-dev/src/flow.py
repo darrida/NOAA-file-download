@@ -51,13 +51,10 @@ def file_download(n_workers: int):
     t5_diff_l = calc.query_diff_local_cloud(
         local_set=t4_lset, cloud_set=t3_cset, chunk_size=download_chunk_size, workers=n_workers
     )
-    # t6_next = []
     csv_l = t5_diff_l.wait()
     print(f'Files to download: {len([i for sub in csv_l.result() for i in sub])}')
     for csv_set in csv_l.result():
         t6_next = cloud.download_new_csvs(url=t2_url, year=t1_year, diff_set=csv_set, data_dir=data_dir)
-        # t6_next.append(result)
-    # else:
 
     t7_task = cloud.find_new_year(url=base_url, next_year=t6_next, year=t1_year, data_dir=data_dir)
 
