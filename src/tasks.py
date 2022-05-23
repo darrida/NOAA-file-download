@@ -1,7 +1,12 @@
+import csv
+from csv import QUOTE_MINIMAL
+import io
 import tarfile, shutil
 from datetime import datetime
 from pathlib import Path
 from tqdm import *
+from fs import open_fs
+from fs import copy as copy_fs
 from prefect import task, get_run_logger
 import pandas as pd
 import httpx
@@ -46,10 +51,11 @@ def archives_difference(cloud, local) -> list:
 
 
 @task(retries=3, retry_delay_seconds=5)
-async def download(file_item: tuple, url: str, data_dir: str):
+async def download_process(file_item: tuple, url: str, data_dir: str):
     logger = get_run_logger()
     try:
         ts_filename, filename = file_item
+        logger.info(f"(1) BEGIN Processing {filename}")
         if filename is None:
             return
         if pd.isnull(filename):
@@ -58,7 +64,7 @@ async def download(file_item: tuple, url: str, data_dir: str):
         download_url = f'{url}/{filename}'
         file_path = Path(data_dir) / filename.replace(".tar.gz", "")
         file_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f'Download Starting: {download_url}')
+        logger.info(f'DOWNLOAD Starting: {download_url}')
         with open(file_path / ts_filename, 'wb') as download_file:
             with httpx.stream("GET", download_url) as response:
                 total = int(response.headers["Content-Length"])
@@ -68,17 +74,23 @@ async def download(file_item: tuple, url: str, data_dir: str):
                         download_file.write(chunk)
                         progress.update(response.num_bytes_downloaded - num_bytes_downloaded)
                         num_bytes_downloaded = response.num_bytes_downloaded
-        logger.info(f'Download Complete: {download_url}')
-        logger.info(f'Extract Starting: {ts_filename}')
-        extract_dir = Path(file_path) / 'data'
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        with open(str(extract_dir / ts_filename).replace('.tar.gz', ''), 'w') as f:
-            pass
-        with tarfile.open(file_path / ts_filename) as tar:
-            tar.extractall(extract_dir)
-        logger.info(f'Extract Complete: {ts_filename}')
+        logger.info(f'DOWNLOAD Complete: {download_url}')
+        
+        # return filename
+        
+        # logger.info(f'Extract Starting: {ts_filename}')
+        # extract_dir = Path(file_path) / 'data'
+        # if extract_dir.exists():
+        #     shutil.rmtree(extract_dir)
+        # extract_dir.mkdir(parents=True, exist_ok=True)
+
+        # with open(str(extract_dir / ts_filename).replace('.tar.gz', ''), 'w') as f:
+        #     pass
+        extract_and_merge(filename, logger)
+        
+        # with tarfile.open(file_path / ts_filename) as tar:
+        #     tar.extractall(extract_dir)
+        logger.info(f"(1) COMPLETED Processing: {filename}")
     except httpx.ConnectTimeout as e:
         logger.error(f'Error message: {e}')
         raise httpx.ConnectTimeout(e)
@@ -98,3 +110,63 @@ async def download(file_item: tuple, url: str, data_dir: str):
         if Path(ts_filename).exists():
             Path(ts_filename).unlink()
         raise KeyboardInterrupt(e)
+
+
+
+
+
+
+def extract_and_merge(filename: Path, logger):
+    year = filename.name[:4]
+
+    exclude_filename = f"{year}_ts_"
+    save_to = Path(filename).parent / f"{year}_full.csv"
+
+    mem_fs = open_fs('mem://')
+    copy_fs.copy_file(str(filename.parent), filename.name, mem_fs, filename.name)
+    
+    logger.info(f"(1) BEGIN Extract: {filename}")
+    with mem_fs.open(filename.name, 'rb') as fd:
+        tar = tarfile.open(fileobj=fd)
+        for member in tqdm(tar.getmembers()):
+            if member.isreg():  # regular file
+                if exclude_filename in member.name:
+                    continue
+                with mem_fs.open(member.name, 'wb') as fd_file:
+                    with tar.extractfile(member.path) as csv_file:
+                        fd_file.write(csv_file.read())
+
+        # print(mem_fs.listdir('/'))
+
+        total_lines = 0
+        csv_lines = []
+        for file_ in tqdm(mem_fs.listdir('/')):
+            lines = None
+            if exclude_filename in file_:
+                continue
+            with mem_fs.open(file_, 'rb') as fd_file:
+                csv_file = io.TextIOWrapper(fd_file, encoding='utf-8')
+                csv_reader = csv.reader(csv_file)
+                lines = list(csv_reader)
+
+                total_lines += len(lines[1:])
+                
+                csv_lines += lines[1:]
+
+        if total_lines == len(csv_lines):
+            logger.info(f'(1) COMPLETED Extract: {filename}')
+            logger.info(f'(2) BEGINNING Merge: {filename}')
+            df = pd.DataFrame(csv_lines, columns=["STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME","TEMP","TEMP_ATTRIBUTES","DEWP","DEWP_ATTRIBUTES","SLP","SLP_ATTRIBUTES","STP","STP_ATTRIBUTES","VISIB","VISIB_ATTRIBUTES","WDSP","WDSP_ATTRIBUTES","MXSPD","GUST","MAX","MAX_ATTRIBUTES","MIN","MIN_ATTRIBUTES","PRCP","PRCP_ATTRIBUTES","SNDP","FRSHTT"])
+            df.to_csv(save_to, index=False, quoting=QUOTE_MINIMAL)
+            logger.info(f"(2) COMPLETED Merge: {filename}")
+
+    with open(str(filename).replace('.tar.gz', ''), 'w') as f:
+        pass
+
+
+if __name__ == '__main__':
+    data_dir = str(Path("./local_data/global-summary-of-the-day-archive"))
+    filename = Path(data_dir) / '2020' / '2020_ts_20210331_0838.tar.gz'
+    # filename = Path(data_dir) / '1929' / '1929_ts_20190221_0305.tar.gz'
+    from loguru import logger
+    extract_and_merge(filename, logger)
