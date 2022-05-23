@@ -11,10 +11,13 @@ from prefect import task, get_run_logger
 import pandas as pd
 import httpx
 
+from pprint import pprint
 
 @task()
 def query_cloud_archives(url: str) -> set:
+    print('start')
     table = pd.read_html(url, skiprows=2)
+    print('finish')
     table[0].columns = ['name', 'date', 'size', 'drop']
     table = table[0].drop(['drop'], axis = 1)
     table['date'] =  pd.to_datetime(table['date'], format='%Y-%m-%d %H:%M')
@@ -25,10 +28,13 @@ def query_cloud_archives(url: str) -> set:
 def query_local_archives(data_dir: str) -> set:
     data_path = Path(data_dir)
     local_d = []
-    for item in data_path.rglob('*.tar.gz'):
+    for item in data_path.rglob('*_ts_*'): #rglob('*.tar.gz'):
+        print(item)
+        if ".tar.gz" in item.name:
+            continue
         dt_m = datetime.fromtimestamp(item.stat().st_mtime)
         size = item.stat().st_size
-        local_d.append({'name': item.name, 'date': dt_m, 'size': str(round(size / 1000))})
+        local_d.append({'name': f"{item.name}.tar.gz", 'date': dt_m, 'size': str(round(size / 1000))})
     if not local_d:
         return pd.DataFrame()
     else:
@@ -41,7 +47,9 @@ def archives_difference(cloud, local) -> list:
     cloud['date_str'] = cloud['date'].dt.strftime('%Y%m%d_%H%M')
     cloud_set = set([(f"{str(row['name']).replace('.tar.gz', '')}_ts_{row['date_str']}.tar.gz", row['name']) 
                      for index, row in cloud.iterrows()])
+    pprint(list(cloud_set)[:3])
     local_set = set([(row['name'], f"{row['name'][:4]}.tar.gz") for index, row in local.iterrows()])
+    pprint(list(local_set)[:3])
     diff_set = cloud_set.difference(local_set)
     diff_set.remove(('NaT_ts_NaT.tar.gz', pd.NaT))  # remove set element created by empty pandas dataframe row
     logger.info(f"New or changed year archives: {diff_set or None}")
@@ -51,10 +59,11 @@ def archives_difference(cloud, local) -> list:
 
 
 @task(retries=3, retry_delay_seconds=5)
-async def download_process(file_item: tuple, url: str, data_dir: str):
+async def download_and_process(file_item: tuple, url: str, data_dir: str):
     logger = get_run_logger()
     try:
         ts_filename, filename = file_item
+        print(ts_filename, filename)
         logger.info(f"(1) BEGIN Processing {filename}")
         if filename is None:
             return
@@ -86,7 +95,7 @@ async def download_process(file_item: tuple, url: str, data_dir: str):
 
         # with open(str(extract_dir / ts_filename).replace('.tar.gz', ''), 'w') as f:
         #     pass
-        extract_and_merge(filename, logger)
+        extract_and_merge(file_path / ts_filename, logger)
         
         # with tarfile.open(file_path / ts_filename) as tar:
         #     tar.extractall(extract_dir)
@@ -148,6 +157,10 @@ def extract_and_merge(filename: Path, logger):
                 csv_file = io.TextIOWrapper(fd_file, encoding='utf-8')
                 csv_reader = csv.reader(csv_file)
                 lines = list(csv_reader)
+                # print(file_)
+                # from pprint import pprint; pprint(lines)
+                lines = [x.append(file_) or x for x in lines]
+                # exit()
 
                 total_lines += len(lines[1:])
                 
@@ -156,7 +169,7 @@ def extract_and_merge(filename: Path, logger):
         if total_lines == len(csv_lines):
             logger.info(f'(1) COMPLETED Extract: {filename}')
             logger.info(f'(2) BEGINNING Merge: {filename}')
-            df = pd.DataFrame(csv_lines, columns=["STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME","TEMP","TEMP_ATTRIBUTES","DEWP","DEWP_ATTRIBUTES","SLP","SLP_ATTRIBUTES","STP","STP_ATTRIBUTES","VISIB","VISIB_ATTRIBUTES","WDSP","WDSP_ATTRIBUTES","MXSPD","GUST","MAX","MAX_ATTRIBUTES","MIN","MIN_ATTRIBUTES","PRCP","PRCP_ATTRIBUTES","SNDP","FRSHTT"])
+            df = pd.DataFrame(csv_lines, columns=["STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME","TEMP","TEMP_ATTRIBUTES","DEWP","DEWP_ATTRIBUTES","SLP","SLP_ATTRIBUTES","STP","STP_ATTRIBUTES","VISIB","VISIB_ATTRIBUTES","WDSP","WDSP_ATTRIBUTES","MXSPD","GUST","MAX","MAX_ATTRIBUTES","MIN","MIN_ATTRIBUTES","PRCP","PRCP_ATTRIBUTES","SNDP","FRSHTT","SOURCE_FILE"])
             df.to_csv(save_to, index=False, quoting=QUOTE_MINIMAL)
             logger.info(f"(2) COMPLETED Merge: {filename}")
 

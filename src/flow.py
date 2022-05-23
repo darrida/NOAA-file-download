@@ -19,7 +19,7 @@
 from prefect import flow
 from prefect.task_runners import SequentialTaskRunner
 from pathlib import Path
-from src.tasks import query_cloud_archives, query_local_archives, archives_difference, download_process
+from tasks import query_cloud_archives, query_local_archives, archives_difference, download_and_process
 
 
 @flow(name="NOAA-files-download", task_runner=SequentialTaskRunner())
@@ -31,7 +31,7 @@ def file_download():
     local_df = query_local_archives(data_dir)
     diff_l = archives_difference(cloud_df, local_df)
     for file_ in diff_l.wait().result():
-        download_process(file_, base_url, data_dir)
+        download_and_process(file_, base_url, data_dir)
 
 
 if __name__ == "__main__":
