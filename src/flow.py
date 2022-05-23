@@ -30,7 +30,7 @@ def file_download():
     cloud_df = query_cloud_archives(base_url)
     local_df = query_local_archives(data_dir)
     diff_l = archives_difference(cloud_df, local_df)
-    for file_ in diff_l.result():
+    for file_ in diff_l.wait().result():
         download(file_, base_url, data_dir)
 
 
