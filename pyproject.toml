@@ -10,6 +10,7 @@ prefect = "^2.0b4"
 tqdm = "^4.64.0"
 pandas = "^1.4.2"
 lxml = "^4.8.0"
+fs = "^2.4.16"
 
 [tool.poetry.dev-dependencies]
 black = "^21.12b0"
