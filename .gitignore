@@ -2,6 +2,7 @@
 local_data
 */dask-worker-space
 *.csv
+venv_jupyter
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
