@@ -1,4 +1,5 @@
 import csv
+import gc
 from csv import QUOTE_MINIMAL
 import io
 import tarfile, shutil
@@ -11,13 +12,12 @@ from prefect import task, get_run_logger
 import pandas as pd
 import httpx
 
-from pprint import pprint
 
 @task()
 def query_cloud_archives(url: str) -> set:
-    print('start')
+    logger = get_run_logger()
+    logger.info(f"HTTP Request Starting: NOAA Global Summary Archives")
     table = pd.read_html(url, skiprows=2)
-    print('finish')
     table[0].columns = ['name', 'date', 'size', 'drop']
     table = table[0].drop(['drop'], axis = 1)
     table['date'] =  pd.to_datetime(table['date'], format='%Y-%m-%d %H:%M')
@@ -28,13 +28,13 @@ def query_cloud_archives(url: str) -> set:
 def query_local_archives(data_dir: str) -> set:
     data_path = Path(data_dir)
     local_d = []
-    for item in data_path.rglob('*_ts_*'): #rglob('*.tar.gz'):
-        print(item)
-        if ".tar.gz" in item.name:
+    # "_ts_" is part of the string for all stored "complete" timestamps (these match NOAA's archive modified dates)
+    for item in data_path.rglob('*_ts_*'):
+        if ".tar.gz" in item.name:  # the actual tarballs also contain "_ts_"; this removes them from the comparison list
             continue
         dt_m = datetime.fromtimestamp(item.stat().st_mtime)
         size = item.stat().st_size
-        local_d.append({'name': f"{item.name}.tar.gz", 'date': dt_m, 'size': str(round(size / 1000))})
+        local_d.append({'name': f"{item.name.replace('___complete', '')}.tar.gz", 'date': dt_m, 'size': str(round(size / 1000))})
     if not local_d:
         return pd.DataFrame()
     else:
@@ -44,15 +44,15 @@ def query_local_archives(data_dir: str) -> set:
 @task()
 def archives_difference(cloud, local) -> list:
     logger = get_run_logger()
-    cloud['date_str'] = cloud['date'].dt.strftime('%Y%m%d_%H%M')
+    # massage cloud and local sets to match for comparison
+    cloud['date_str'] = cloud['date'].dt.strftime('%Y%m%d_%H%M')  # update NOAA archive timestamp to match local formatting
     cloud_set = set([(f"{str(row['name']).replace('.tar.gz', '')}_ts_{row['date_str']}.tar.gz", row['name']) 
                      for index, row in cloud.iterrows()])
-    pprint(list(cloud_set)[:3])
     local_set = set([(row['name'], f"{row['name'][:4]}.tar.gz") for index, row in local.iterrows()])
-    pprint(list(local_set)[:3])
+    # diff set is any year archive that is missing or newer than local data
     diff_set = cloud_set.difference(local_set)
     diff_set.remove(('NaT_ts_NaT.tar.gz', pd.NaT))  # remove set element created by empty pandas dataframe row
-    logger.info(f"New or changed year archives: {diff_set or None}")
+    logger.info(f"New or changed year archives count: {len(diff_set) or None}")
     diff_l = list(diff_set)
     diff_l.sort()
     return diff_l
@@ -63,13 +63,14 @@ async def download_and_process(file_item: tuple, url: str, data_dir: str):
     logger = get_run_logger()
     try:
         ts_filename, filename = file_item
-        print(ts_filename, filename)
-        logger.info(f"(1) BEGIN Processing {filename}")
+        logger.info(f"BEGIN Processing {filename}")
         if filename is None:
             return
         if pd.isnull(filename):
             logger.warning(f'{filename} == pd.NaT')
             return
+        
+        # TODO: move download code to separate support function
         download_url = f'{url}/{filename}'
         file_path = Path(data_dir) / filename.replace(".tar.gz", "")
         file_path.mkdir(parents=True, exist_ok=True)
@@ -85,21 +86,16 @@ async def download_and_process(file_item: tuple, url: str, data_dir: str):
                         num_bytes_downloaded = response.num_bytes_downloaded
         logger.info(f'DOWNLOAD Complete: {download_url}')
         
-        # return filename
+        result = extract_and_merge(file_path / ts_filename, logger)
         
-        # logger.info(f'Extract Starting: {ts_filename}')
-        # extract_dir = Path(file_path) / 'data'
-        # if extract_dir.exists():
-        #     shutil.rmtree(extract_dir)
-        # extract_dir.mkdir(parents=True, exist_ok=True)
-
-        # with open(str(extract_dir / ts_filename).replace('.tar.gz', ''), 'w') as f:
-        #     pass
-        extract_and_merge(file_path / ts_filename, logger)
+        if result == False:
+            logger.info(f"FAILED Processing: {filename}")
+            return
         
-        # with tarfile.open(file_path / ts_filename) as tar:
-        #     tar.extractall(extract_dir)
-        logger.info(f"(1) COMPLETED Processing: {filename}")
+        with open(f"{str(file_path / ts_filename).replace('.tar.gz', '')}___complete", 'w') as f:
+            pass
+        logger.info(f"COMPLETED Processing: {filename}")
+            
     except httpx.ConnectTimeout as e:
         logger.error(f'Error message: {e}')
         raise httpx.ConnectTimeout(e)
@@ -114,29 +110,36 @@ async def download_and_process(file_item: tuple, url: str, data_dir: str):
         if Path(ts_filename).exists():
             Path(ts_filename).unlink()
         raise Exception(e)
-    except KeyboardInterrupt as e:
-        ts_filename = file_path = Path(data_dir) / filename.replace(".tar.gz", "") / ts_filename
-        if Path(ts_filename).exists():
-            Path(ts_filename).unlink()
-        raise KeyboardInterrupt(e)
 
 
+def extract_and_merge(filename: Path, logger: get_run_logger):
+    """
+    Extracts Tarfile Multiple Records Files into Single CSV
+    - (1) copies tarfile into memory (ram) filesystem (root)
+    - (2) extracts all files (csv) from tarfile into same memory filesystem location
+    - (3) opens and merges all csvs into a single list of lists (includes original filename in last index of each list)
+    - (4) loads list of lists into a pandas dataframe, then exports using `.to_csv()`
+    - (5) returns bool indicator of success or failure
 
-
-
-
-def extract_and_merge(filename: Path, logger):
+    Args:
+        filename (pathlib.Path): full filepath + filename of tarfile to process
+        logger (get_run_logger): initialized Prefect 2.0 `get_run_logger`
+    
+    Returns:
+        bool: Success (True) or failure (False)
+    """
     year = filename.name[:4]
-
     exclude_filename = f"{year}_ts_"
     save_to = Path(filename).parent / f"{year}_full.csv"
 
+    # (1) copy tarfile into memory filesystem
     mem_fs = open_fs('mem://')
     copy_fs.copy_file(str(filename.parent), filename.name, mem_fs, filename.name)
     
-    logger.info(f"(1) BEGIN Extract: {filename}")
+    logger.info(f"BEGIN Extract: {filename}")
     with mem_fs.open(filename.name, 'rb') as fd:
         tar = tarfile.open(fileobj=fd)
+         # (2) extract files from tarball into same memory filesystem
         for member in tqdm(tar.getmembers()):
             if member.isreg():  # regular file
                 if exclude_filename in member.name:
@@ -144,9 +147,12 @@ def extract_and_merge(filename: Path, logger):
                 with mem_fs.open(member.name, 'wb') as fd_file:
                     with tar.extractfile(member.path) as csv_file:
                         fd_file.write(csv_file.read())
+        logger.info(f'COMPLETED Extract: {filename}')
 
-        # print(mem_fs.listdir('/'))
-
+        logger.info(f'BEGINNING Merge: {filename}')
+        # (3) open and merge all csv records into same list of lists (`csv_lines`)
+        gc.disable()
+        print('GC Enabled:', gc.isenabled(), '(temp disable)')
         total_lines = 0
         csv_lines = []
         for file_ in tqdm(mem_fs.listdir('/')):
@@ -157,29 +163,27 @@ def extract_and_merge(filename: Path, logger):
                 csv_file = io.TextIOWrapper(fd_file, encoding='utf-8')
                 csv_reader = csv.reader(csv_file)
                 lines = list(csv_reader)
-                # print(file_)
-                # from pprint import pprint; pprint(lines)
-                lines = [x.append(file_) or x for x in lines]
-                # exit()
 
-                total_lines += len(lines[1:])
-                
-                csv_lines += lines[1:]
+                lines = [x.append(file_) or x for x in lines]  # add original filename to last column of every record
+                total_lines += len(lines[1:])  # counter that used to compare totals below
+                csv_lines += lines[1:]  # merge into unified records set for year
+        # gc.collect()
 
         if total_lines == len(csv_lines):
-            logger.info(f'(1) COMPLETED Extract: {filename}')
-            logger.info(f'(2) BEGINNING Merge: {filename}')
+            # (4) load `csv_lines` into dataframe and export to csv
             df = pd.DataFrame(csv_lines, columns=["STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME","TEMP","TEMP_ATTRIBUTES","DEWP","DEWP_ATTRIBUTES","SLP","SLP_ATTRIBUTES","STP","STP_ATTRIBUTES","VISIB","VISIB_ATTRIBUTES","WDSP","WDSP_ATTRIBUTES","MXSPD","GUST","MAX","MAX_ATTRIBUTES","MIN","MIN_ATTRIBUTES","PRCP","PRCP_ATTRIBUTES","SNDP","FRSHTT","SOURCE_FILE"])
             df.to_csv(save_to, index=False, quoting=QUOTE_MINIMAL)
-            logger.info(f"(2) COMPLETED Merge: {filename}")
 
-    with open(str(filename).replace('.tar.gz', ''), 'w') as f:
-        pass
-
-
-if __name__ == '__main__':
-    data_dir = str(Path("./local_data/global-summary-of-the-day-archive"))
-    filename = Path(data_dir) / '2020' / '2020_ts_20210331_0838.tar.gz'
-    # filename = Path(data_dir) / '1929' / '1929_ts_20190221_0305.tar.gz'
-    from loguru import logger
-    extract_and_merge(filename, logger)
+            logger.info(f"COMPLETED Merge: {filename}")
+            # (5) return bool indicator of success
+            success = True
+        else:
+            logger.info(f"FAILED to process: {filename}\nLines in Files: {total_lines}; Lines from Merge: {len(csv_lines)}")
+            success = False
+        
+        gc.collect()
+        gc.enable()
+        print('GC Enabled:', gc.isenabled())
+        if not gc.isenabled() == True:
+            raise Exception('FAILED to re-enable GARBAGE COLLECTION')
+        return success
