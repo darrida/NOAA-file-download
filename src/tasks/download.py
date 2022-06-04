@@ -59,11 +59,11 @@ def archives_difference(cloud, local) -> list:
 
 
 @task(retries=3, retry_delay_seconds=5)
-async def download_and_process(file_item: tuple, url: str, data_dir: str):
+async def download_and_merge(file_item: tuple, url: str, data_dir: str):
     logger = get_run_logger()
     try:
         ts_filename, filename = file_item
-        logger.info(f"BEGIN Processing {filename}")
+        logger.info(f"BEGIN Downlard/Merge Process: {filename}")
         if filename is None:
             return
         if pd.isnull(filename):
@@ -86,15 +86,16 @@ async def download_and_process(file_item: tuple, url: str, data_dir: str):
                         num_bytes_downloaded = response.num_bytes_downloaded
         logger.info(f'DOWNLOAD Complete: {download_url}')
         
-        result = extract_and_merge(file_path / ts_filename, logger)
+        merged_df = extract_and_merge(file_path / ts_filename, logger)
         
-        if result == False:
-            logger.info(f"FAILED Processing: {filename}")
+        if not isinstance(merged_df, pd.DataFrame):
+            logger.info(f"FAILED Download/Merge Process: {filename}")
             return
         
+        logger.info(f"COMPLETED Download/Merge Process: {filename}")
+        return merged_df
         with open(f"{str(file_path / ts_filename).replace('.tar.gz', '')}___complete", 'w') as f:
             pass
-        logger.info(f"COMPLETED Processing: {filename}")
             
     except httpx.ConnectTimeout as e:
         logger.error(f'Error message: {e}')
@@ -167,23 +168,30 @@ def extract_and_merge(filename: Path, logger: get_run_logger):
                 lines = [x.append(file_) or x for x in lines]  # add original filename to last column of every record
                 total_lines += len(lines[1:])  # counter that used to compare totals below
                 csv_lines += lines[1:]  # merge into unified records set for year
-        # gc.collect()
+        gc.collect()
+        gc.enable()
+        print('GC Enabled:', gc.isenabled())
+        if not gc.isenabled() == True:
+            raise Exception('FAILED to re-enable GARBAGE COLLECTION')
 
         if total_lines == len(csv_lines):
             # (4) load `csv_lines` into dataframe and export to csv
+            logger.info(f"COMPLETED Merge: {filename}")
             df = pd.DataFrame(csv_lines, columns=["STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME","TEMP","TEMP_ATTRIBUTES","DEWP","DEWP_ATTRIBUTES","SLP","SLP_ATTRIBUTES","STP","STP_ATTRIBUTES","VISIB","VISIB_ATTRIBUTES","WDSP","WDSP_ATTRIBUTES","MXSPD","GUST","MAX","MAX_ATTRIBUTES","MIN","MIN_ATTRIBUTES","PRCP","PRCP_ATTRIBUTES","SNDP","FRSHTT","SOURCE_FILE"])
-            df.to_csv(save_to, index=False, quoting=QUOTE_MINIMAL)
+            return df
+            # df.to_csv(save_to, index=False, quoting=QUOTE_MINIMAL)
 
             logger.info(f"COMPLETED Merge: {filename}")
             # (5) return bool indicator of success
             success = True
         else:
             logger.info(f"FAILED to process: {filename}\nLines in Files: {total_lines}; Lines from Merge: {len(csv_lines)}")
-            success = False
-        
-        gc.collect()
-        gc.enable()
-        print('GC Enabled:', gc.isenabled())
-        if not gc.isenabled() == True:
-            raise Exception('FAILED to re-enable GARBAGE COLLECTION')
-        return success
+            return False
+
+
+@task()
+def save_to_file(df: pd.DataFrame, year: str, data_dir: str, tarfile_name: str):
+    year_dir = Path(data_dir) / year
+    df.to_csv(year_dir / f"{year}_full.csv", index=False, quoting=QUOTE_MINIMAL)
+    with open(f"{str(year_dir / tarfile_name).replace('.tar.gz', '')}___complete", 'w') as f:
+        pass
