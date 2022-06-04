@@ -187,11 +187,3 @@ def extract_and_merge(filename: Path, logger: get_run_logger):
         else:
             logger.info(f"FAILED to process: {filename}\nLines in Files: {total_lines}; Lines from Merge: {len(csv_lines)}")
             return False
-
-
-@task()
-def save_to_file(df: pd.DataFrame, year: str, data_dir: str, tarfile_name: str):
-    year_dir = Path(data_dir) / year
-    df.to_csv(year_dir / f"{year}_full.csv", index=False, quoting=QUOTE_MINIMAL)
-    with open(f"{str(year_dir / tarfile_name).replace('.tar.gz', '')}___complete", 'w') as f:
-        pass
