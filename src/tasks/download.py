@@ -179,11 +179,6 @@ def extract_and_merge(filename: Path, logger: get_run_logger):
             logger.info(f"COMPLETED Merge: {filename}")
             df = pd.DataFrame(csv_lines, columns=["STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME","TEMP","TEMP_ATTRIBUTES","DEWP","DEWP_ATTRIBUTES","SLP","SLP_ATTRIBUTES","STP","STP_ATTRIBUTES","VISIB","VISIB_ATTRIBUTES","WDSP","WDSP_ATTRIBUTES","MXSPD","GUST","MAX","MAX_ATTRIBUTES","MIN","MIN_ATTRIBUTES","PRCP","PRCP_ATTRIBUTES","SNDP","FRSHTT","SOURCE_FILE"])
             return df
-            # df.to_csv(save_to, index=False, quoting=QUOTE_MINIMAL)
-
-            logger.info(f"COMPLETED Merge: {filename}")
-            # (5) return bool indicator of success
-            success = True
         else:
             logger.info(f"FAILED to process: {filename}\nLines in Files: {total_lines}; Lines from Merge: {len(csv_lines)}")
             return False
