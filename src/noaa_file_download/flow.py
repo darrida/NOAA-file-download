@@ -25,12 +25,12 @@
 from prefect import flow, get_run_logger
 from prefect.task_runners import SequentialTaskRunner
 from pathlib import Path
-from src.tasks.download import query_cloud_archives, query_local_archives, archives_difference, download_and_merge, save_to_file
-from src.tasks.clean import set_station_as_index, find_missing_lat_long, find_missing_elevation, confirm_consistent_spatial
+from noaa_file_download.tasks.download import query_cloud_archives, query_local_archives, archives_difference, download_and_merge, save_to_file
+from noaa_file_download.tasks.clean import set_station_as_index, find_missing_lat_long, find_missing_elevation, confirm_consistent_spatial
 
 
 @flow(name="NOAA-files-download", task_runner=SequentialTaskRunner())
-def main():
+def noaa_file_download():
     logger = get_run_logger()
     base_url = "https://www.ncei.noaa.gov/data/global-summary-of-the-day/archive"
     data_dir = str(Path("./local_data/global-summary-of-the-day-archive"))
@@ -38,7 +38,7 @@ def main():
     cloud_df = query_cloud_archives(base_url)
     local_df = query_local_archives(data_dir)
     diff_l = archives_difference(cloud_df, local_df)
-    for file_ in diff_l.wait().result():
+    for file_ in diff_l:
         year = Path(file_[1]).name[:4]
         tarfile_name = file_[0]
         
@@ -58,9 +58,9 @@ def main():
         logger.info(f'Clean step completed for {year}')
 
         # SAVE DATA
-        s6_save = save_to_file(final_data_df.result(), year, data_dir, tarfile_name)
+        s6_save = save_to_file(final_data_df, year, data_dir, tarfile_name)
         logger.info(f'Download completed for {year}')
 
 
 if __name__ == "__main__":
-    main()
+    noaa_file_download()
